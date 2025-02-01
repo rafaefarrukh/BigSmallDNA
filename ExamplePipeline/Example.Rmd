@@ -1,0 +1,351 @@
+Example Pipeline for BigSmallDNA
+
+<!------------------------------------------------------------------------------------------------>
+
+1. Filter genomes on NCBI using the following criteria and download the csv results table:
+    - Taxon ID: 2697049 (CoV-2)
+    - Ambiguous Characters < 30
+    - Nucleotide Completeness: Complete
+    - Host: 9696 (human)
+    - Collection date: 30th December 2003 - current date
+2. Extract accession IDs from the results tables.
+3. Download genomes using NCBI datasets and remove duplicates using SeqKit.
+4. Extract ORFs for S gene using EMBOSS and remove duplicates using SeqKit.
+5. Cluster the sequences using h-clustering.
+6. Align clusters roughly using MAFFT and remove duplicates using SeqKit.
+7. Improve genetic diversity for each lineage.
+
+```{r setup, include=FALSE}
+
+# disable rendering of chunks
+knitr::opts_chunk$set(eval = FALSE)
+knitr::opts_chunk$set(include = FALSE)
+
+# working directory
+wd <- "data"
+
+# libraries
+library(tidyverse) # general data manipulation and visualization
+library(stringr) # string manipulation
+library(ape) # read, store (DNAbin), and write fasta
+library(pegas) # nuc.div()
+library(kmer) # kdistance()
+library(dendextend) # sub-clustering
+
+```
+
+```{bash wd setup}
+
+mkdir data
+
+# data structure
+cd $wd
+mkdir $wd/raw fasta msa
+
+```
+
+```{bash 1: filter and download results table}
+
+# open NCBI Virus
+xdg-open "https://www.ncbi.nlm.nih.gov/labs/virus/vssi/#/"
+
+# search 2697049
+# enter the mentioned inclusion criteria
+# download csv result table as "data/raw/res.csv" with the following: Accession, Pangolin, with version.
+
+```
+
+```{r 2: extract ids}
+
+## read csv results table
+res <- read.csv(paste0(wd, "/raw/res.csv"))
+
+# make index for writing IDS
+temp <- c(seq(1, nrow(res), 10000), nrow(res))
+
+# write IDs
+for (i in 1:length(temp)) {
+    write.table(
+        res$Accession[temp[i-1]:temp[i]],
+        paste0(wd, "/raw/ID.", i-1, ".txt"),
+        row.names = FALSE, col.names = FALSE, quote = FALSE
+        )
+    }
+
+
+```
+
+```{bash 3: download sequences}
+
+# wd
+cd $wdDatasets
+
+# assuming 100 files of IDs, so change index accordingly
+
+# download sequences
+for i in {1..136}
+do
+    ./datasets download genome accession --inputfile $wd/raw/ID.$i.txt --filename $wd/raw/ID.$i.zip
+done
+
+# extract
+for i in {1..136}
+do
+    unzip $wd/raw/ID.$i.zip -d $wd/raw/ID.$i
+done
+
+# empty file to merge all seqs
+> $wd/raw/dataset
+
+# add all seqs to empty file
+for i in {1..136}
+do 
+    cat "$wd/raw/res.$i/ncbi_dataset/data/genomic.fna" >> "$wd/raw/dataset"
+done
+
+# remove duplicates
+seqkit rmdup -s < $wd/raw/dataset > $wd/raw/dataset.fasta
+
+# remove unwanted files
+for i in {1..136}
+do 
+    rm $wd/raw/res.$i.zip # downloaded zip files
+    rm $wd/raw/res.$i # extracted folders
+    rm $wd/raw/dataset # merged seqs with duplicates
+done
+
+```
+
+```{bash 4: extract ORFs}
+
+# wd
+cd $wd/raw
+
+# avg length of S gene is 3822 and we keep +-5% margin
+getorf -sequence dataset.fasta -outseq ORF -minsize 3631 -maxsize 3860 -find 3
+
+# remove duplicates
+seqkit rmdup -s < ORF > ORF.fasta
+
+```
+
+```{r 5: cluster}
+
+# import ORFs
+ORF <- read.FASTA(paste0(wd, "/raw/ORF.fasta"))
+
+# CoV-2 has Pangolin lineage so it will be clustered by the classification but the lineages with more than 5000 sequences will be clustered.
+
+# trim labels for ease
+labels(ORF) <- substr(labels(ORF), 1, 10)
+
+# trim results table
+res <- res[which(res$Accession %in% labels(ORF)),]
+
+# seq frequency of lineages
+lin <- data.frame(table((res$Pangolin)))
+
+# group lineages with less than 3 seqs since they can not be clustered
+cluster.x <- ORF[labels(ORF) %in% res$Accession[res$Pangolin %in% lin$Var1[lin$Freq <= 3]]]
+
+# determine which lineages do not need to be sub-clustered
+temp <- as.character(lin$Var1[lin$Freq > 3 & lin$Freq <= 5000])
+
+# write clusters which do not need to be sub-clustered
+for (i in 1:length(temp)) {
+    
+    print(i) # progress
+    
+    # write
+    write.FASTA(
+        ORF[labels(ORF) %in% res$Accession[res$Pangolin %in% temp[i]]],
+        file = paste0(wd, "/fasta/cluster.", temp[i], ".fasta")
+    )
+}
+
+# number of clusters (will be used as index)
+var <- 1:length(temp)
+
+# determine which lineages need to be sub-clustered
+temp <- as.character(lin$Var1[lin$Freq > 5000])
+
+# repeat the following for all clusters
+# not placed in loop because number of clusters need to be checked
+
+# index for cluster
+no = (1:length(temp))[1]
+
+# store cluster
+seq <- ORF[labels(ORF) %in% res$Accession[res$Pangolin %in% temp[no]]]
+
+# kmean clustering
+kmean <- cluster(seq)
+
+# sub-cluster (adjust k accordingly)
+cluster <- cutree(as.dendrogram(kmean), k = 1)
+View(table(cluster))
+
+# convert to table
+cluster <- data.frame(id = names(cluster), cluster = cluster)
+
+# write sub-clusters
+for (i in 1:length(unique(cluster$cluster))) {
+    
+    print(i) # progress
+    
+    # write
+    write.FASTA(
+        seq[filter(cluster, cluster == i)$id],
+        paste0(wd, "/fasta/cluster.", temp[no], ".", i, ".fasta"),
+        )
+    
+    # update index
+    c.var <- c(c.var, paste0(temp[no], ".", i))
+    
+}
+
+# number of clusters used
+# AY.103 - 7
+# B.1.1.7 - 17
+# B.1.2 - 4
+# BA.1.1 - 15
+# BA.2.12.1 - 5
+# BA.2 - 3
+
+# remove objects and clear cache
+rm(list = c("kmean", "cluster", "seq", "no"))
+gc()
+
+```
+
+```{bash 6: MSA}
+
+# wd
+cd $wd
+
+# MSA
+for i in "fasta"/*".fasta"
+do
+     mafft --retree 1 --thread 12 $i > msa/$(basename $i .fasta).msa.fasta
+done
+
+```
+
+```{r 7: genetic diversity}
+
+# read MSA
+for (i in 1:length(var)) {
+    assign(
+        paste0("cluster.", var[i]),
+        read.FASTA(paste0(wd, "/msa/cluster.", var[i], ".msa.fasta"))
+        )
+    }
+
+# dataframe to summarize genetic diversity improvements
+nd <- data.frame(
+    cluster = paste0("cluster.", var), # cluster
+    old.nd = NA, new.nd = NA, change.nd = NA, # old, new, and change in nuc div
+    old.seq = NA, new.seq = NA, change.seq = NA, # old, new, and change in num of seq
+    th = NA, # threshold
+    time = NA # time taken
+    )
+
+
+# improve diversity
+for (i in 1:length(.var)) { # check index before running
+    
+    print(i) # progress 
+    
+    print(Sys.time()) # time of start
+    
+    try({ # ignore errors
+    
+    time.old <- Sys.time() # time for time complexity
+    
+    # get cluster
+    temp <- get(paste0("cluster.", c.var[i])) # run for i>=3
+    
+    # convert to distance matrix
+    ## choose model according to data
+    ## current: K80 (default)
+    dist <- dist.dna(temp, model = "K80", as.matrix = TRUE)
+    # convert diagonal entries to NA for ease
+    diag(dist) <- NA
+    
+    # temporary dataframe to evaluate optimal threshold
+    ## chose threshold range according to data
+    ## current: 0.9 - 1
+    ## if unsure use c(0.5, 0.6, 0.7, 0.8, 0.9, 1) to get an idea
+    threshold <- data.frame(th = c(0.9, 0.95, 0.99, 0.999, 0.9999, 1), nd = NA)
+    
+    # nd of temp (calc once to prevent recalculations)
+    temp.nd <- nuc.div(temp)
+    
+    # evaluate optimal threshold
+    # new = nd of seqs with identity >= threshold * max score
+    # nd = new - old
+    for (j in 1:nrow(threshold)) {
+        threshold$nd[j] <-
+            nuc.div(
+                temp[
+                    unique(c(which(
+                        dist >= threshold$th[j]*max(dist, na.rm = TRUE),
+                        arr.ind = TRUE)))
+                    ]
+                ) 
+        - temp.nd
+    }
+    
+    # determine optimal threshold and save seqs
+    assign(
+        paste0("cluster", var[i], ".i"),
+        temp[
+            unique(c(which(
+                dist >= threshold$th[
+                    order(threshold$nd, decreasing = TRUE)[1]
+                    ]*max(dist, na.rm = TRUE),
+                arr.ind = TRUE)))
+            ]
+        )
+    
+    # nd
+    nd$old.nd[i] <- temp.nd
+    nd$new.nd[i] <- max(threshold$nd) + temp.nd
+    nd$change.nd[i] <- (nd$new.nd[i] - nd$old.nd[i]) / nd$old.nd[i]
+    nd$th[i] <- threshold$th[order(threshold$nd, decreasing = TRUE)[1]]
+    nd$time[i] <- as.numeric(Sys.time() - time.old)
+    nd$old.seq[i] <- length(temp)
+    nd$new.seq[i] <- length(get(paste0(var[i], ".i")))
+    nd$change.seq[i] <- (nd$new.seq[i] - nd$old.seq[i]) / nd$old.seq[i]
+    
+    })
+    
+}
+
+# check if nd was decreased for any cluster
+View(nd[which(nd$change.nd <= 0),])
+
+# For negative cases, lower the threshold range and repeat the loop above
+
+# merge clusters
+temp <- c()
+for (i in 1:length(var)) {
+    temp <- c(temp, get(paste0("cluster", var[i], ".i")))
+}
+
+# trim results table
+res <- res[res$Accession %in% labels(temp),]
+
+# get un-aligned seqs
+dataset <- c(ORF[labels(ORF) %in% res$Accession])
+
+# write
+write.FASTA(c12, file = paste0(wd, "/fasta/dataset.fasta"))
+
+# remove objects and clear cache
+rm(list=c("temp", paste0("cluster.", var), paste0("cluster", var[i], ".i"), "var"))
+gc()
+
+```
+
+<!------------------------------------------------------------------------------------------------>

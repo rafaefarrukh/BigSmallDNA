@@ -15,16 +15,15 @@ cd $wdDatasets
 # download sequences
 ## check datasets manual for optimal command
 ## it may fail for some files, in which case rerun command for those files
-
 for i in {1..100}
 do
-./datasets download genome accession --inputfile $wd/raw/res.$i.txt --filename $wd/raw/res.$i.zip
+    ./datasets download genome accession --inputfile $wd/raw/ID.$i.txt --filename $wd/raw/ID.$i.zip
 done
 
-
+# extract
 for i in {1..100}
 do
-unzip $wd/raw/res.$i.zip -d $wd/raw/res.$i
+    unzip $wd/raw/ID.$i.zip -d $wd/raw/ID.$i
 done
 
 # empty file to merge all seqs
@@ -33,7 +32,7 @@ done
 # add all seqs to empty file
 for i in {1..100}
 do 
-cat "$wd/raw/res.$i/ncbi_dataset/data/genomic.fna" >> "$wd/raw/dataset"
+    cat "$wd/raw/res.$i/ncbi_dataset/data/genomic.fna" >> "$wd/raw/dataset"
 done
 
 # remove duplicates
@@ -42,9 +41,9 @@ seqkit rmdup -s < $wd/raw/dataset > $wd/raw/dataset.fasta
 # remove unwanted files
 for i in {1..100}
 do 
-rm $wd/raw/res.$i.zip # downloaded zip files
-rm $wd/raw/res.$i # extracted folders
-rm $wd/raw/dataset # merged seqs with duplicates
+    rm $wd/raw/res.$i.zip # downloaded zip files
+    rm $wd/raw/res.$i # extracted folders
+    rm $wd/raw/dataset # merged seqs with duplicates
 done
 
 ###################################################################################################

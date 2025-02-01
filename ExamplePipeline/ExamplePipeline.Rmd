@@ -2,6 +2,39 @@ Example Pipeline for BigSmallDNA
 
 <!------------------------------------------------------------------------------------------------>
 
+# Example pipeline details
+
+Hardware Details:
+
+- Model: Dell Inc. Precision 7730
+- CPU: Intel Core i7-8750H × 12
+- RAM: 32 GB
+- VRAM: 8 GB
+- OS: Fedora Linux 40 (Workstation) with Linux 6.11.4-201.fc40.x86_64
+
+Softwares Details:
+
+- R 4.4.1
+    - tidyverse 2.0.0
+    - stringr 1.5.1
+    - kmer 1.1.2
+    - ape 5.8.1
+    - pegas 1.3
+    - dendextend 1.19.0
+- GNU bash 5.2.26
+- datasets 16.22.1
+- SeqKit 2.8.2
+- EMBOSS 6.6.0.0
+- MAFFT 7.526
+
+Other Resources:
+
+- NCBI Web Server
+
+<!------------------------------------------------------------------------------------------------>
+
+# Instructions
+
 1. Filter genomes on NCBI using the following criteria and download the csv results table:
     - Taxon ID: 2697049 (CoV-2)
     - Ambiguous Characters < 30
@@ -14,6 +47,10 @@ Example Pipeline for BigSmallDNA
 5. Cluster the sequences using h-clustering.
 6. Align clusters roughly using MAFFT and remove duplicates using SeqKit.
 7. Improve genetic diversity for each lineage.
+
+<!------------------------------------------------------------------------------------------------>
+
+# Pipeline
 
 ```{r setup, include=FALSE}
 

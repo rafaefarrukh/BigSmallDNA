@@ -4,6 +4,8 @@ Reduce large DNS dataset without sacrificing data of significance
 
 ---
 
+Its better to read the [pdf version](READMe/READMe.pdf), github isn't rendering some of the LaTeX properly.
+
 
 # Overview
 

@@ -1,0 +1,395 @@
+---
+title: "BigSmallDNA Example Pipeline"
+output: pdf_document
+---
+
+For studies with DNA datasets, big data is good but computationally expensive. This method aims to reduce it without losing the benefits. It does this by improving the nucleotide diversity of the sample.
+
+This example uses SARS-CoV-2 virus (responsible for 2019 pandemic and has >9M seqs on GenBank) to show how to implement this method and how good it is.
+
+# From Obtaining Original Dataset to Reduced Dataset
+
+NCBI Virus web server hosts >9M sequences for SARS-CoV-2 but many of these are poorly read and can negatively impact results. Hence a strict inclusion/exclusion criteria was used to filter the sequences. However, the web server can not download large datasets. And, the command line tool "datasets" by NCBI is developed for this purpose, it lacks the filtration capabilities of the web server. Hence after filtration, the results table was downloaded from which the Accession IDs were be extracted and fed to datasets. This process was done in batches due to poor internet stability. After downloading the dataset, duplicates were removed using "SeqKit".
+
+Since distinct genomes need not have distinct genes, the S gene was extracted from all genomes using "EMBOSS getORF" and the duplicates were removed using SeqKit. Since SARS-CoV-2 is classified using the Pangolin lineage, we used it to cluster the sequences and large clusters (>6000 seqs) were sub-clustered using kmeans and h-clustering. If your set of sequences does not have an existing classification, you can use clustering softwares such as MeShClust and MMSeqs2 as they do not require aligned sequences.
+
+Each cluster was then roughly aligned using "MAFFT" with loose parameters and the genetic diversity was improved using the provided method. The corresponding unaligned sequences were combined to form the reduced dataset.
+
+\break
+
+# Technical Specification
+
+Software Dependencies (versions)
+
+- R (4.4.1) with packages: tidyverse, stringr, ape, pegas, kmer, and dendextend
+- GNU bash (5.2.26)
+- datasets (16.22.1)
+- SeqKit (2.8.2)
+- EMBOSS (6.6.0.0)
+- MAFFT (7.526)
+
+This pipeline was run on a laptop with the following hardware:
+
+- Model: Dell Inc. Precision 7730
+- CPU: Intel Core i7-8750H × 12
+- RAM: 32 GB 
+- VRAM: 8 GB
+- OS: Fedora Linux 40 (Workstation) with Linux 6.11.4-201.fc40.x86_64
+
+# Instructions
+
+1. Filter genomes on NCBI web server using the following criteria and download the csv results table with collection date and Pangolin lineage,
+    - Taxon ID: 2697049
+    - Ambiguous Characters < 30
+    - Nucleotide Completeness: Complete
+    - Host: 9696 (human)
+    - Collection date: 30th December 2003 - current date
+2. Extract accession IDs (with version) from the results table.
+3. Download genomes using NCBI datasets and remove duplicates using SeqKit.
+4. Extract ORFs using EMBOSS and remove duplicates using SeqKit.
+5. Cluster sequences using Pangolin lineage
+6. Sub-cluster by kmeans and hierarchical clustering.
+7. Roughly align the sequences using MAFFT.
+8. Improve genetic diversity of all clusters using provided method.
+9. Finely align all roughly using MAFFT.
+
+# Code
+
+See Rmd version of this document.
+
+```{r setup r, include=FALSE}
+
+# disable rendering of chunks
+knitr::opts_chunk$set(eval = FALSE)
+knitr::opts_chunk$set(include = FALSE)
+
+# main working directory where all data should be stored
+wd.main = "/home/rafae/Documents/Projects/BigSmallDNA" # for R
+wd = "/home/rafae/Documents/Projects/BigSmallDNA/Example" # for R
+Sys.setenv(wd = wd) # for bash
+
+# libraries
+library(tidyverse) # general data manipulation and visualization
+library(stringr) # string manipulation
+library(ape) # read, store, and write fasta
+library(pegas) # nuc.div()
+library(kmer) # cluster()
+library(dendextend) # cutree()
+library(gridExtra) # grid.arrange()
+
+# BSDNA function
+source(paste0(wd.main, "/Script/BSDNA.R"))
+
+```
+
+```{bash setup bash}
+
+# make required directories
+mkdir -p $wd/data/{raw/{ids,zip,extracted},clusters,msa}
+
+# working directories for command line tools
+wdDatasets="/home/rafae/Downloads/ncbi"
+
+# check dependencies
+seqkit --help
+getorf -help
+mafft -help
+
+```
+
+```{bash 1: results table}
+
+# open NCBI Virus
+xdg-open "https://www.ncbi.nlm.nih.gov/labs/virus/vssi/#/"
+
+# enter the mentioned inclusion criteria
+## Taxon ID: 2697049 (CoV-2)
+## Ambiguous Characters < 30
+## Nucleotide Completeness: Complete
+## Host: 9696 (human)
+## Collection date: 30th December 2003 - current date
+
+# download csv result table as "data/raw/res.csv" with the following: Accession, Pangolin, with version
+
+```
+
+```{r 2: extract ids}
+
+# read csv results table
+res <- read.csv(paste0(wd, "/data/raw/res.csv"))
+
+# make index for writing IDS
+temp <- c(seq(1, nrow(res), 10000), nrow(res))
+
+# write IDs
+for (i in 2:length(temp)) {
+    write.table(
+        res$Accession[temp[i-1]:temp[i]],
+        paste0(wd, "/data/raw/ids/id.", i-1, ".txt"),
+        row.names = FALSE, col.names = FALSE, quote = FALSE
+        )
+    }
+
+```
+
+```{bash 3: download sequences}
+
+# wd
+cd $wdDatasets
+
+# download sequences
+for i in {1..137}
+do
+    ./datasets download virus genome accession --inputfile $wd/data/raw/ids/id.$i.txt --filename $wd/data/raw/zip/id.$i.zip
+done
+
+# extract
+for i in {1..137}
+do
+    unzip $wd/data/raw/zip/id.$i.zip -d $wd/data/raw/extracted/id.$i
+done
+
+# empty file to merge all seqs
+> $wd/data/raw/dataset
+
+# add all seqs to empty file
+for i in {1..137}
+do 
+    cat "$wd/data/raw/extracted/id.$i/ncbi_dataset/data/genomic.fna" >> "$wd/data/raw/dataset"
+done
+
+# remove duplicates
+seqkit rmdup -s < $wd/data/raw/dataset > $wd/data/raw/dataset.fasta
+
+# remove unwanted files
+for i in {1..137}
+do 
+    rm -r $wd/data/raw/ids              # ids
+    rm -r $wd/data/raw/zip              # zip files
+    rm -r $wd/data/raw/extracted        # extracted folders
+done
+rm $wd/data/raw/dataset                 # merged sequences with duplicates
+
+```
+
+```{bash 4: extract ORFs}
+
+# wd
+cd $wd/data/raw
+
+# avg length of S gene is 3822 and we keep +-5% margin
+getorf -sequence dataset.fasta -outseq ORF -minsize 3631 -maxsize 3860 -find 3
+
+# remove duplicates
+seqkit rmdup -s < ORF > ORF.fasta
+
+# remove unwanted files
+rm dataset.fasta    # merged sequences
+rm ORF              # ORfs with duplicates
+
+```
+
+```{r 5: cluster}
+
+# import ORFs
+ORF <- read.FASTA(paste0(wd, "/data/raw/ORF.fasta"))
+
+# trim labels for ease
+# CoV-2 accession IDs are of of length 10, check your dataset
+labels(ORF) <- substr(labels(ORF), 1, 10)
+
+# trim results table
+res <- res[which(res$Accession %in% labels(ORF)),]
+
+# seq frequency of lineages
+lin <- data.frame(table((res$Pangolin)))
+
+# there is no point in clustering lineages with less than 2 seqs, so group them together
+X <- ORF[labels(ORF) %in% res$Accession[res$Pangolin %in% lin$Var1[lin$Freq <= 2]]]
+
+# determine which lineages do NOT need to be sub-clustered
+temp <- as.character(lin$Var1[lin$Freq > 2 & lin$Freq <= 5000])
+
+# write clusters which do not need to be sub-clustered
+for (i in 1:length(temp)) {
+    print(i) # progress
+    write.FASTA(
+        ORF[labels(ORF) %in% res$Accession[res$Pangolin %in% temp[i]]], # cluster
+        file = paste0(wd, "/data/clusters/cluster.", temp[i], ".fasta") # name
+    )
+}
+
+```
+
+```{r 6: sub-cluster}
+
+# determine which lineages need to be sub-clustered
+temp <- as.character(lin$Var1[lin$Freq > 5000])
+
+# repeat for all clusters
+# not placed in a for loop because k will vary
+
+# index for ease
+no <- (1:length(temp))[6]
+
+# store cluster
+seq <- ORF[labels(ORF) %in% res$Accession[res$Pangolin %in% temp[no]]]
+
+# kmean clustering
+kmean <- cluster(seq)
+
+# sub-cluster (adjust k accordingly)
+cluster <- cutree(as.dendrogram(kmean), k = 7)
+View(table(cluster))
+
+# AY.103        k = 15
+# B.1.1.7       k = 20
+# B.1.2         k = 15
+# BA.1.1        k = 15
+# BA.2          k = 5
+# BA.2.12.1     k = 7
+
+# convert to table
+cluster <- data.frame(id = names(cluster), cluster = cluster)
+
+# write sub-clusters
+for (i in 1:length(unique(cluster$cluster))) {
+    print(i) # progress
+    write.FASTA(
+        seq[filter(cluster, cluster == i)$id], # sub-cluster
+        paste0(wd, "/data/clusters/cluster.", temp[no], ".sub.", i, ".fasta"), # name
+        )
+    }
+
+# remove objects and clear cache
+rm(list = c("cluster", "kmean", "seq", "no", "temp", "lin"))
+gc()
+
+```
+
+```{bash 7: rough MSA}
+
+# wd
+cd $wd/data
+
+# MSA
+for i in "clusters"/*".fasta"
+do
+     mafft --retree 1 --thread 12 $i > msa/$(basename $i .fasta).msa.fasta
+done
+
+```
+
+```{r 8: improve nucleotide diversity}
+
+# read file names
+index <- list.files(paste0(wd, "/data/msa"))
+
+# read MSA
+for (i in 1:length(index)) {
+    assign(index[i], read.FASTA(paste0(wd, "/data/msa/", index[i])))
+    }
+
+# improve nucleotide diversity (see Script/BSDNA.R)
+BSDNA(data = index, model = "TN93", t.coeff = c(0.9, 0.95, 0.999, 1))
+
+# check if nd was decreased for any cluster
+View(nd[which(nd$change.nd < 0),])
+
+# For negative cases, lower the threshold range and repeat the loop above
+
+# merge clusters
+temp <- X # original grouped lineages with less than 3 seqs
+for (i in 1:length(index)) {temp <- c(temp, get(paste0(index[i], ".improved")))}
+
+# trim results table
+res <- res[res$Accession %in% labels(temp),]
+
+# get unaligned seqs
+dataset <- c(ORF[labels(ORF) %in% res$Accession])
+
+# write seqs
+write.FASTA(dataset, file = paste0(wd, "/data/dataset.fasta"))
+
+# write nd for time complexity
+write.csv(nd, paste0(wd, "/data/nd.csv"))
+
+```
+
+```{r graphs}
+
+# overall changes
+ggsave(
+    plot = ggplot(nd, aes(x=change.seq, y=log(change.nd), size=log(length), color=log(time))) +
+        geom_point() +
+        scale_color_viridis_c() +
+        labs(title = "Changes in Dataset", x = "change in number of sequences per cluster", y = "log of change in nucleotide diversity per cluster", color = "log(time)", size = "log(length)"),
+    file = paste0(wd, "/Figure1.png"),
+    units = "cm", width = 25, height = 10, dpi = 300
+    )
+
+
+# change in nuc div and length
+temp <- data.frame(rbind(
+    cbind(dataset="original", nd=nd$old.nd, seq=nd$old.seq),
+    cbind(dataset="reduced", nd=nd$new.nd, seq=nd$new.seq)))
+temp$nd <- as.numeric(temp$nd); temp$seq <- as.numeric(temp$seq)
+
+improvements <- grid.arrange(
+    ggplot(temp, aes(x=nd, fill=dataset)) +
+        geom_density(alpha=0.5) +
+        scale_x_continuous(trans="log") +
+        theme(legend.position = "left") +
+        labs(title = "Changes in Nucleotide Diversity", x = "log of nucleotide diversity"),
+    ggplot(temp, aes(x=seq, fill=dataset)) +
+        geom_density(alpha=0.5) +
+        scale_x_continuous(trans="log") +
+        theme(legend.position = "none") +
+        labs(title = "Changes in Cluster Length", x = "log of cluster length"),
+    nrow = 1, ncol = 2
+)
+ggsave(plot = improvements, filename = paste0(wd, "/Figure2.png"),
+       units = "cm", width=25, height=10)
+
+```
+
+```{r clean r}
+
+# remove unwanted objects and clear cache
+for (i in 1:length(index)) {rm(list = c(paste0(index[i], ".improved"), index[i]))}
+rm(list = c("improvements", "res", "temp", "threshold", "dist", "time.old", "index", "X", "ORF", "i", "j"))
+gc()
+
+```
+
+```{bash clean bash}
+
+# remove unwanted files
+rm -r $wd/data/raw         # ORF.fasta and results table
+rm -r $wd/data/clusters    # clustered fasta files
+rm -r $wd/data/msa         # rough alignments
+
+```
+
+# Results
+
+NCBI hosts 9,066,813 (on 5th Feb 2024) from which 1,365,731 were downloaded using a strict filtration criteria and after extracting the S gene and removing duplicates, the original dataset comprised of 183,780 sequences. While the data had 2658 lineages, 880 had less than 3 sequences and were grouped together. The remaining were clustered and 6 were sub-clustered, forming 1849 clusters. The general improvements are shown below in the Table 1 and Figure 1 while Figure 2 shows the changes in the distributions of nucleotide diversity and number of sequences.
+
+|Property|Original Dataset|Reduced Dataset|Change (%)|
+|--:|:-:|:-:|:-:|
+|mean $\pi$ per cluster|0.0009177|0.0074139|708|
+|median $\pi$ per cluster|0.0006168|0.0013001|111|
+|min $\pi$ per cluster|0.0000000|0.0000000|0|
+|max $\pi$ per cluster|0.1621207|0.6161369|280|
+|------------------------------|------------------------|------------------------|------------------------|
+|mean seqs per cluster|99|3|3200|
+|median seqs per cluster|12|2|500|
+|min seqs per cluster|3|2|50|
+|max seqs per cluster|4,749|34|13,868|
+|------------------------------|------------------------|------------------------|------------------------|
+|Total number of seqs|183,780|6,673|2,654|
+:Summary of changes in dataset
+
+![Overall Changes in the Dataset](/home/rafae/Documents/Projects/BigSmallDNA/Example/Figure1.png)
+
+![Changes in distribution of length and nucleotide diversity.](/home/rafae/Documents/Projects/BigSmallDNA/Example/Figure2.png)

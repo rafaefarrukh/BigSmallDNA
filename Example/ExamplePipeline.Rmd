@@ -291,7 +291,7 @@ for (i in 1:length(index)) {
     }
 
 # improve nucleotide diversity (see Script/BSDNA.R)
-BSDNA(data = index, model = "TN93", t.coeff = c(0.9, 0.95, 0.999, 1))
+BSDNA(data = index, dist.model = "TN93", t.coeff = c(0.9, 0.95, 0.999, 1))
 
 # check if nd was decreased for any cluster
 View(nd[which(nd$change.nd < 0),])

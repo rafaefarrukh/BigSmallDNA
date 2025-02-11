@@ -7,7 +7,7 @@
 BSDNA <- function(data, change = T, change.name = "changes", dist.model = "K80", t.coeff = c(0.5, 0.75, 1.0), prefix = data, suffix = "reduced") {
     
     # parameters
-    # odata         # vector containing name(s) of DNAbin objects
+    # data         # vector containing name(s) of DNAbin objects
     # change        # if true, then it makes a dataframe which tracks changes in dataset
     # change.name   # name of dataframe tracking changes
     # t.coeff       # vector with threshold coefficients
@@ -17,11 +17,11 @@ BSDNA <- function(data, change = T, change.name = "changes", dist.model = "K80",
     # checks
     require(ape); require(pegas)
     if(!(is.vector(data))) {stop("data must be the names of the DNAobjects", .call = F)}
-    if(sum(unlist(lapply(lapply(index, get), class)) == "DNAbin") != length(index)) {stop("the data must be DNAbin object")}
+    if(sum(unlist(lapply(lapply(data, get), class)) == "DNAbin") != length(data)) {stop("the data must be DNAbin object")}
     if(!(dist.model %in% c("raw", "N", "TS", "TV", "JC69", "K80", "F81", "K81", "F84", "BH87", "T92", "TN93", "GG95", "logdet", "paralin", "indel", "indelblock"))) {stop("dist.model does not exist", call. = F)}
     if(class(t.coeff) != "numeric") {stop("t.coeff is not numeric", call. = F)}
     if(sum(1 < range(t.coeff) | range(t.coeff) <= 0) > 0) {stop("range of t.coeff must be betweeen 0 and 1", call. = F)}
-    if(sum(length(prefix) == length(odata) | length(suffix) == length(odata)) > 0) {stop("atleast one of prefix or suffix must have same length as data", .call = F)}
+    if(sum(length(prefix) == length(data) | length(suffix) == length(data)) == 0) {stop("atleast one of prefix or suffix must have same length as data", .call = F)}
     
     # if change = T, then construct a dataframe for logging changes.
     if (change == T) {
@@ -39,10 +39,10 @@ BSDNA <- function(data, change = T, change.name = "changes", dist.model = "K80",
     for (i in 1:length(data)) {
         
         # get DNAbin object
-        temp <- get(odata[i])
+        temp <- get(data[i])
         
         # progress report
-        print(paste(i, "out of", length(odata), "with", length(temp), "sequences")); print(Sys.time())
+        print(paste(i, "out of", length(data), "with", length(temp), "sequences")); print(Sys.time())
         
         try({ # ignore errors
             
@@ -82,10 +82,10 @@ BSDNA <- function(data, change = T, change.name = "changes", dist.model = "K80",
             if (change == T){
                 nd$time[i] <- as.numeric(Sys.time() - time.old)
                 nd$old.nd[i] <- nuc.div(temp)
-                nd$new.nd[i] <- nuc.div(get(paste0(data[i], ".improved")))
+                nd$new.nd[i] <- nuc.div(get(paste0(data[i], ".reduced")))
                 nd$change.nd[i] <- ((nd$new.nd[i] - nd$old.nd[i]) / nd$old.nd[i])
                 nd$old.seq[i] <- length(temp)
-                nd$new.seq[i] <- length(get(paste0(data[i], ".improved")))
+                nd$new.seq[i] <- length(get(paste0(data[i], ".reduced")))
                 nd$change.seq[i] <- ((nd$old.seq[i] - nd$new.seq[i]) / nd$old.seq[i])
                 nd$threshold[i] <- threshold$t[order(threshold$nd, decreasing = TRUE)[1]]
                 nd$length[i] <- length(temp[[1]])
@@ -96,7 +96,7 @@ BSDNA <- function(data, change = T, change.name = "changes", dist.model = "K80",
         }
     
     # if changes = T, then save changes
-    if (change == T) {assign("changes", nd, envir = .GlobalEnv)}
+    if (change == T) {assign(change.name, nd, envir = .GlobalEnv)}
     
 }
 

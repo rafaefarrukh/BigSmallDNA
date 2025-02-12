@@ -1,6 +1,6 @@
 # BigSmallDNA
 
-Reduce large DNA dataset without sacrificing data of significance
+Reduce large DNA dataset without sacrificing information.
 
 ---
 
